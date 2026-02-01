@@ -4,10 +4,19 @@ namespace Game.Player.States
 {
     public class PlayerJumpState : PlayerBaseState
     {
-        private float _jumpForce = 12f;
+        // Jump Physics Settings
+        private float _jumpForce = 50f;
         private float _airMoveSpeed = 5f;
+
+        // Gravity Modifiers for realistic feel
+        private float _gravityScale = 3f;        // Normal falling gravity
+        private float _fallGravityScale = 4f;    // Faster falling when moving down
+        private float _jumpCutGravityScale = 6f; // Extra gravity when releasing jump early
+
+        // Jump Control
         private bool _hasLanded;
-        private bool _hasJumped; // Track if we've already executed the jump
+        private bool _hasJumped;
+        private bool _isJumpCut;  // Track if player released jump button early
 
         public PlayerJumpState(PlayerStateMachine stateMachine, PlayerController controller)
             : base(stateMachine, controller) { }
@@ -16,6 +25,7 @@ namespace Game.Player.States
         {
             _hasLanded = false;
             _hasJumped = false;
+            _isJumpCut = false;
 
             // Only execute jump if we're grounded (entering from ground state)
             if (IsGrounded())
@@ -24,12 +34,27 @@ namespace Game.Player.States
                 _hasJumped = true;
             }
             // If entering while already in air (fell off platform), don't jump
+
+            // Set default gravity scale
+            controller.RB.gravityScale = _gravityScale;
         }
 
         public override void LogicUpdate()
         {
-            // IMPORTANT: Do NOT allow jumping while already in air
-            // Ignore jump input completely while in this state
+            // JUMP CUT - Release jump button early to fall faster (realistic feel)
+            if (_hasJumped && !_isJumpCut && controller.RB.linearVelocityY > 0)
+            {
+                // If player releases jump button while still going up
+                if (!controller.InputReader.JumpTriggered)
+                {
+                    _isJumpCut = true;
+                    // Cut the jump short by reducing upward velocity
+                    controller.RB.linearVelocity = new Vector2(
+                        controller.RB.linearVelocityX,
+                        controller.RB.linearVelocityY * 0.5f  // Cut jump height in half
+                    );
+                }
+            }
 
             // Allow mid-air dashing if your game design permits
             if (controller.InputReader.DashTriggered)
@@ -51,7 +76,10 @@ namespace Game.Player.States
 
         public override void PhysicsUpdate()
         {
-            // Add air horizontal control
+            // REALISTIC GRAVITY - Apply different gravity based on vertical velocity
+            ApplyRealisticGravity();
+
+            // Air horizontal control
             float moveInput = controller.InputReader.Movement.x;
 
             if (Mathf.Abs(moveInput) > 0.01f)
@@ -72,13 +100,49 @@ namespace Game.Player.States
             }
         }
 
+        public override void Exit()
+        {
+            // Reset gravity to default when leaving jump state
+            controller.RB.gravityScale = _gravityScale;
+        }
+
         private void Jump()
         {
             // Reset vertical velocity for a consistent jump height
             controller.RB.linearVelocity = new Vector2(controller.RB.linearVelocityX, 0);
+
+            // Apply jump force as impulse for instant burst
             controller.RB.AddForce(Vector2.up * _jumpForce, ForceMode2D.Impulse);
 
             controller.Anim.SetTrigger("Jump");
+        }
+
+        private void ApplyRealisticGravity()
+        {
+            // Apply different gravity scales based on vertical velocity for more realistic feel
+
+            if (_isJumpCut)
+            {
+                // Player released jump button - fall faster
+                controller.RB.gravityScale = _jumpCutGravityScale;
+            }
+            else if (controller.RB.linearVelocityY < 0)
+            {
+                // Falling - apply stronger gravity for snappier feel
+                controller.RB.gravityScale = _fallGravityScale;
+            }
+            else if (controller.RB.linearVelocityY > 0)
+            {
+                // Rising - normal gravity
+                controller.RB.gravityScale = _gravityScale;
+            }
+
+            // Optional: Cap falling speed to prevent falling too fast
+            float maxFallSpeed = -20f;
+            if (controller.RB.linearVelocityY < maxFallSpeed)
+            {
+                controller.RB.linearVelocity = new Vector2(controller.RB.linearVelocityX, maxFallSpeed);
+            }
         }
 
         private void CheckTransition()
